@@ -261,25 +261,77 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
     return fotoOriginal;
   }
 
-  // 📷 TOMAR FOTO (Paso inicial ajustado + Compresión dinámica <= 30KB)
-  Future<void> _tomarFoto(bool esEvento) async {
-    final XFile? foto = await _picker.pickImage(
-      source: ImageSource.camera,
-      imageQuality: 15, // Ajustado a 15 para menor peso base
-      maxWidth: 500,    // Reducido de 800 a 500
-      maxHeight: 500,
+  // 📸 SELECCIONAR ORIGEN DE LA FOTO (CÁMARA O GALERÍA)
+  void _mostrarOpcionesOrigenImagen(bool esEvento) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Seleccionar Origen de Imagen',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF0D47A1),
+                  ),
+                ),
+                const SizedBox(height: 15),
+                ListTile(
+                  leading: const Icon(Icons.camera_alt_rounded, color: Color(0xFF0D47A1)),
+                  title: const Text('Tomar Foto con Cámara', style: TextStyle(fontWeight: FontWeight.w500)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _tomarFoto(esEvento, ImageSource.camera);
+                  },
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.photo_library_rounded, color: Color(0xFF0D47A1)),
+                  title: const Text('Elegir de la Galería', style: TextStyle(fontWeight: FontWeight.w500)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _tomarFoto(esEvento, ImageSource.gallery);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
+  }
 
-    if (foto != null) {
-      File fotoComprimida = await _comprimirFoto(File(foto.path), maxKB: 30);
+  // 📷 TOMAR/SELECCIONAR FOTO CON ORIGEN DINÁMICO
+  Future<void> _tomarFoto(bool esEvento, ImageSource origen) async {
+    try {
+      final XFile? foto = await _picker.pickImage(
+        source: origen,
+        imageQuality: 15,
+        maxWidth: 500,
+        maxHeight: 500,
+      );
 
-      setState(() {
-        if (esEvento) {
-          _evidenciaEvento = fotoComprimida;
-        } else {
-          _evidenciaCausante = fotoComprimida;
-        }
-      });
+      if (foto != null) {
+        File fotoComprimida = await _comprimirFoto(File(foto.path), maxKB: 30);
+
+        setState(() {
+          if (esEvento) {
+            _evidenciaEvento = fotoComprimida;
+          } else {
+            _evidenciaCausante = fotoComprimida;
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint("Error al obtener imagen: $e");
     }
   }
 
@@ -375,16 +427,14 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
                       return;
                     }
 
-                    // ✍️ COMPRESIÓN DE FIRMA <= 10 KB
                     try {
                       RenderRepaintBoundary boundary = modalFirmaKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
 
-                      double pixelRatio = 1.0; // Ratio óptimo para bajo peso
+                      double pixelRatio = 1.0;
                       ui.Image image = await boundary.toImage(pixelRatio: pixelRatio);
                       ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
                       Uint8List pngBytes = byteData!.buffer.asUint8List();
 
-                      // Bucle dinámico para asegurar <= 10 KB (10240 Bytes)
                       while (pngBytes.lengthInBytes > 10 * 1024 && pixelRatio > 0.2) {
                         pixelRatio -= 0.15;
                         image = await boundary.toImage(pixelRatio: pixelRatio);
@@ -539,7 +589,6 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
     return base64Encode(pdfBytes);
   }
 
-  // 🔒 GUARDAR Y VALIDAR TODO COMO OBLIGATORIO
   Future<void> _guardarReporte() async {
     if (_turno == null) {
       _mostrarAlertaValidacion('Falta seleccionar el Turno.');
@@ -660,7 +709,6 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
         await ApiService.insertar('roturas', 'reportes_rotura', datosDeRotura);
       }
 
-      // 📱 NOTIFICACIÓN DE WHATSAPP
       try {
         final String listaProdTxt = _productos
             .map((p) => '  • *SKU:* ${p.skuCtrl.text.trim()} - *Cant:* ${p.cantCtrl.text.trim()}')
@@ -691,7 +739,6 @@ $listaProdTxt
         debugPrint("Error notificando por WhatsApp: $e");
       }
 
-      // 📧 DISPARO DE CORREOS
       try {
         final String origenSeleccionado = origenFinal;
         List<String> listaCorreosEnviar = [];
@@ -1233,9 +1280,9 @@ $listaProdTxt
                 hijos: [
                   Row(
                     children: [
-                      Expanded(child: _buildFotoCaja('EVIDENCIA EVENTO *', _evidenciaEvento, () => _tomarFoto(true))),
+                      Expanded(child: _buildFotoCaja('EVIDENCIA EVENTO *', _evidenciaEvento, () => _mostrarOpcionesOrigenImagen(true))),
                       const SizedBox(width: 15),
-                      Expanded(child: _buildFotoCaja('EVIDENCIA CAUSANTE *', _evidenciaCausante, () => _tomarFoto(false))),
+                      Expanded(child: _buildFotoCaja('EVIDENCIA CAUSANTE *', _evidenciaCausante, () => _mostrarOpcionesOrigenImagen(false))),
                     ],
                   )
                 ],
@@ -1437,25 +1484,56 @@ $listaProdTxt
   }
 
   Widget _buildFotoCaja(String titulo, File? archivoFoto, VoidCallback onTap) {
-    return Container(
-      height: 140,
-      decoration: BoxDecoration(color: const Color(0xFFF8F9FA), border: Border.all(color: Colors.grey.shade300, style: BorderStyle.solid, width: 1.5), borderRadius: BorderRadius.circular(12)),
-      child: archivoFoto != null
-          ? ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.file(archivoFoto, fit: BoxFit.cover, width: double.infinity))
-          : Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(titulo, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
-          const SizedBox(height: 10),
-          ElevatedButton.icon(
-            onPressed: onTap,
-            icon: const Icon(Icons.camera_alt_outlined, size: 16, color: Colors.black87),
-            label: const Text('Cargar', style: TextStyle(color: Colors.black87)),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.white, elevation: 1, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: Colors.grey.shade300))),
-          ),
-          const SizedBox(height: 10),
-          const Text('Sin archivo', style: TextStyle(fontSize: 10, color: Colors.black38)),
-        ],
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        height: 140,
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8F9FA),
+          border: Border.all(color: Colors.grey.shade300, style: BorderStyle.solid, width: 1.5),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: archivoFoto != null
+            ? Stack(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.file(archivoFoto, fit: BoxFit.cover, width: double.infinity, height: double.infinity),
+            ),
+            Positioned(
+              right: 6,
+              top: 6,
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: const BoxDecoration(
+                  color: Colors.black54,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.edit, color: Colors.white, size: 14),
+              ),
+            ),
+          ],
+        )
+            : Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(titulo, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
+            const SizedBox(height: 10),
+            ElevatedButton.icon(
+              onPressed: onTap,
+              icon: const Icon(Icons.add_a_photo_outlined, size: 16, color: Colors.black87),
+              label: const Text('Cargar', style: TextStyle(color: Colors.black87)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                elevation: 1,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: Colors.grey.shade300)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text('Sin archivo', style: TextStyle(fontSize: 10, color: Colors.black38)),
+          ],
+        ),
       ),
     );
   }

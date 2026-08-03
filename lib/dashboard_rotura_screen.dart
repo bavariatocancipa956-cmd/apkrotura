@@ -24,9 +24,10 @@ class _DashboardRoturaScreenState extends State<DashboardRoturaScreen> {
   List<String> _turnosDisponibles = ['Todos'];
   List<String> _areasDisponibles = ['Todos'];
 
-  // Agrupaciones calculadas
+  // Agrupaciones y Métricas
   int _totalReportes = 0;
   double _totalMermas = 0;
+  double _totalHl = 0; // 🍺 Métrica acumulada para HL Total
   Map<String, int> _causales = {};
   Map<String, int> _sectores = {};
   Map<String, Map<String, dynamic>> _opms = {};
@@ -54,7 +55,9 @@ class _DashboardRoturaScreenState extends State<DashboardRoturaScreen> {
       _aplicarFiltros();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error cargando datos: $e'), backgroundColor: Colors.red));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error cargando datos: $e'), backgroundColor: Colors.red),
+        );
       }
     } finally {
       if (mounted) setState(() => _cargando = false);
@@ -75,10 +78,14 @@ class _DashboardRoturaScreenState extends State<DashboardRoturaScreen> {
       }
 
       final turno = reg['turno']?.toString().trim();
-      if (turno != null && turno.isNotEmpty) turnos.add(turno);
+      if (turno != null && turno.isNotEmpty && turno.toUpperCase() != 'NULL') {
+        turnos.add(turno);
+      }
 
       final area = reg['ubicacion']?.toString().trim();
-      if (area != null && area.isNotEmpty) areas.add(area);
+      if (area != null && area.isNotEmpty && area.toUpperCase() != 'NULL') {
+        areas.add(area);
+      }
     }
 
     _aniosDisponibles = ['Todos', ...anios.toList()..sort()];
@@ -109,11 +116,12 @@ class _DashboardRoturaScreenState extends State<DashboardRoturaScreen> {
   void _calcularMetricas() {
     _totalReportes = _registrosFiltrados.length;
     _totalMermas = 0;
+    _totalHl = 0;
     _causales.clear();
     _sectores.clear();
     _opms.clear();
 
-    // Ordenar por fecha/id para el histórico (más reciente primero)
+    // Ordenar por ID descendente
     _registrosFiltrados.sort((a, b) {
       final idA = int.tryParse(a['id']?.toString() ?? '0') ?? 0;
       final idB = int.tryParse(b['id']?.toString() ?? '0') ?? 0;
@@ -123,16 +131,24 @@ class _DashboardRoturaScreenState extends State<DashboardRoturaScreen> {
     _historico = _registrosFiltrados.take(15).toList();
 
     for (var reg in _registrosFiltrados) {
+      // 1. Acumulado de Mermas (Unidades)
       final cant = double.tryParse(reg['cantidad']?.toString() ?? '0') ?? 0;
       _totalMermas += cant;
 
+      // 2. Acumulado de HL Total (Soporta coma ',' o punto '.' decimal)
+      final String hlStr = reg['hl_total']?.toString().replaceAll(',', '.') ?? '0';
+      final cantHl = double.tryParse(hlStr) ?? 0;
+      _totalHl += cantHl;
+
+      // 3. Causales
       final causal = reg['causal']?.toString().trim() ?? 'Sin clasificar';
       _causales[causal] = (_causales[causal] ?? 0) + 1;
 
-      final sector = reg['ubicacion']?.toString().trim() ?? 'Sin ubicacion';
+      // 4. Ubicación / Sector
+      final sector = reg['ubicacion']?.toString().trim() ?? 'Sin ubicación';
       _sectores[sector] = (_sectores[sector] ?? 0) + 1;
 
-      // 🟢 CORRECCIÓN: Apuntamos al campo 'personal' (OPM real) y no al 'reportante'
+      // 5. Personal / OPM
       String opm = reg['personal']?.toString().trim().toUpperCase() ?? '';
       if (opm.isEmpty || opm == 'NULL') opm = 'SIN ASIGNAR';
 
@@ -195,47 +211,80 @@ class _DashboardRoturaScreenState extends State<DashboardRoturaScreen> {
     return Row(
       children: [
         Expanded(
-          child: Container(
-            padding: const EdgeInsets.all(15),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 4))]),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('TOTAL REPORTES', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
-                    Icon(Icons.assignment_outlined, color: Colors.blue.shade700, size: 20),
-                  ],
-                ),
-                const SizedBox(height: 5),
-                Text('$_totalReportes', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black87)),
-              ],
-            ),
+          child: _buildCardKPI(
+            titulo: 'TOTAL REPORTES',
+            valor: '$_totalReportes',
+            icono: Icons.assignment_outlined,
+            colorIcono: Colors.blue.shade700,
           ),
         ),
-        const SizedBox(width: 15),
+        const SizedBox(width: 10),
         Expanded(
-          child: Container(
-            padding: const EdgeInsets.all(15),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 4))]),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('BOTELLAS MERMADAS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
-                    const Icon(Icons.show_chart_rounded, color: Colors.orange, size: 20),
-                  ],
-                ),
-                const SizedBox(height: 5),
-                Text(_totalMermas.toStringAsFixed(0), style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black87)),
-              ],
-            ),
+          child: _buildCardKPI(
+            titulo: 'MERMAS (UND)',
+            valor: _totalMermas.toStringAsFixed(0),
+            icono: Icons.show_chart_rounded,
+            colorIcono: Colors.orange.shade800,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _buildCardKPI(
+            titulo: 'HL TOTAL',
+            valor: _totalHl.toStringAsFixed(2),
+            icono: Icons.opacity_rounded,
+            colorIcono: Colors.teal.shade700,
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildCardKPI({
+    required String titulo,
+    required String valor,
+    required IconData icono,
+    required Color colorIcono,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          )
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  titulo,
+                  style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.grey),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Icon(icono, color: colorIcono, size: 18),
+            ],
+          ),
+          const SizedBox(height: 6),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              valor,
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black87),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -266,7 +315,7 @@ class _DashboardRoturaScreenState extends State<DashboardRoturaScreen> {
             children: [
               Expanded(child: _buildDropdown('Turno', _turnoFiltro, _turnosDisponibles, (v) => setState(() { _turnoFiltro = v!; _aplicarFiltros(); }))),
               const SizedBox(width: 15),
-              Expanded(child: _buildDropdown('Área / Línea', _areaFiltro, _areasDisponibles, (v) => setState(() { _areaFiltro = v!; _aplicarFiltros(); }))),
+              Expanded(child: _buildDropdown('Área / Ubicación', _areaFiltro, _areasDisponibles, (v) => setState(() { _areaFiltro = v!; _aplicarFiltros(); }))),
             ],
           ),
         ],
@@ -467,11 +516,13 @@ class _DashboardRoturaScreenState extends State<DashboardRoturaScreen> {
             final area = reg['ubicacion']?.toString().toUpperCase() ?? 'N/A';
             final causal = reg['causal']?.toString() ?? 'Sin causal';
 
-            // 🟢 CORRECCIÓN TAMBIÉN AQUÍ: Se muestra el Personal / OPM, no el reportante
             String opm = reg['personal']?.toString().toUpperCase() ?? '';
             if (opm.isEmpty || opm == 'NULL') opm = 'SIN ASIGNAR';
 
             final cant = double.tryParse(reg['cantidad']?.toString() ?? '0') ?? 0;
+
+            final String hlStr = reg['hl_total']?.toString().replaceAll(',', '.') ?? '0';
+            final cantHl = double.tryParse(hlStr) ?? 0;
 
             return Container(
               margin: const EdgeInsets.only(bottom: 12),
@@ -491,10 +542,17 @@ class _DashboardRoturaScreenState extends State<DashboardRoturaScreen> {
                     ),
                   ),
                   const SizedBox(width: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8)),
-                    child: Text('-${cant.toStringAsFixed(0)} Und', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.green.shade800)),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8)),
+                        child: Text('-${cant.toStringAsFixed(0)} Und', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.green.shade800)),
+                      ),
+                      const SizedBox(height: 2),
+                      Text('${cantHl.toStringAsFixed(3)} HL', style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold)),
+                    ],
                   ),
                 ],
               ),

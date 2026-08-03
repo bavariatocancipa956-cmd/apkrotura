@@ -35,14 +35,37 @@ class ApiService {
     }
   }
 
-  // 🔴 ELIMINAR (Actualizado para soportar el envío de body)
+  // 🟡 ACTUALIZAR (MÉTODO AGREGADO)
+  static Future<Map<String, dynamic>> actualizar(
+      String esquema,
+      String tabla,
+      Map<String, dynamic> datos,
+      String idColumna,
+      dynamic idValor,
+      ) async {
+    final url = Uri.parse('$baseUrl/$database/actualizar/$esquema/$tabla/$idColumna/$idValor');
+
+    final response = await http.put(
+      url,
+      headers: _headers,
+      body: jsonEncode(datos),
+    );
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      final body = jsonDecode(response.body);
+      return body['data'] ?? body;
+    } else {
+      throw Exception('Error al actualizar datos: ${response.body}');
+    }
+  }
+
+  // 🔴 ELIMINAR
   static Future<bool> eliminar(String esquema, String tabla, String idColumna, dynamic idValor, {Map<String, dynamic>? body}) async {
     final url = Uri.parse('$baseUrl/$database/eliminar/$esquema/$tabla/$idColumna/$idValor');
 
     final response = await http.delete(
       url,
       headers: _headers,
-      // Si se envía un body (como los archivos a borrar), se codifica a JSON. Si no, va nulo.
       body: body != null ? jsonEncode(body) : null,
     );
 
