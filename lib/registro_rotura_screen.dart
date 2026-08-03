@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:ui' as ui;
 import 'dart:convert';
 import 'dart:typed_data';
@@ -40,8 +39,8 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
     return 'OPERADOR';
   }
 
-  // 📅 FECHA DE REGISTRO
-  DateTime _fechaEvento = DateTime.now();
+  // 🇨🇴 FECHA DE REGISTRO EN HORA COLOMBIA (UTC-5)
+  late DateTime _fechaEvento;
   String? _turno;
   final String _area = 'LOGISTICA';
 
@@ -71,10 +70,10 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
 
   final List<ProductoAfectado> _productos = [ProductoAfectado()];
 
-  File? _evidenciaEvento;
-  File? _evidenciaCausante;
-
-  File? _archivoFirmaProcesado;
+  // 🌐 MANEJO DE IMÁGENES COMPATIBLE CON WEB (Uint8List en lugar de File)
+  Uint8List? _evidenciaEvento;
+  Uint8List? _evidenciaCausante;
+  Uint8List? _archivoFirmaProcesado;
 
   // 🚚 CONDICIÓN DE VEHÍCULO
   bool get _mostrarDatosVehiculo {
@@ -95,6 +94,8 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
   @override
   void initState() {
     super.initState();
+    // 🇨🇴 Hora oficial de Colombia (UTC - 5 horas)
+    _fechaEvento = DateTime.now().toUtc().subtract(const Duration(hours: 5));
     _cargarListasDesdeBD();
   }
 
@@ -230,14 +231,14 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
     }
   }
 
-  // 🗜️ FUNCIÓN AUXILIAR PARA GARANTIZAR COMPRESIÓN DE FOTO <= 30 KB
-  Future<File> _comprimirFoto(File fotoOriginal, {int maxKB = 30}) async {
+  // 🗜️ COMPRESIÓN DE FOTO MEDIANTE BYTES (Compatibilidad total con Web)
+  Future<Uint8List> _comprimirFoto(Uint8List bytesOriginales, {int maxKB = 30}) async {
     int maxBytes = maxKB * 1024;
-    if (await fotoOriginal.length() <= maxBytes) {
-      return fotoOriginal;
+    if (bytesOriginales.lengthInBytes <= maxBytes) {
+      return bytesOriginales;
     }
 
-    Uint8List bytes = await fotoOriginal.readAsBytes();
+    Uint8List bytes = bytesOriginales;
     int targetWidth = 450;
 
     while (bytes.lengthInBytes > maxBytes && targetWidth >= 100) {
@@ -249,16 +250,14 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
       if (byteData != null) {
         Uint8List newBytes = byteData.buffer.asUint8List();
         if (newBytes.lengthInBytes <= maxBytes || targetWidth <= 100) {
-          final tempDir = Directory.systemTemp;
-          final file = File('${tempDir.path}/foto_${DateTime.now().millisecondsSinceEpoch}.png');
-          await file.writeAsBytes(newBytes, flush: true);
-          return file;
+          return newBytes;
         }
+        bytes = newBytes;
       }
       targetWidth -= 50;
     }
 
-    return fotoOriginal;
+    return bytesOriginales;
   }
 
   // 📸 SELECCIONAR ORIGEN DE LA FOTO (CÁMARA O GALERÍA)
@@ -309,18 +308,19 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
     );
   }
 
-  // 📷 TOMAR/SELECCIONAR FOTO CON ORIGEN DINÁMICO
+  // 📷 TOMAR/SELECCIONAR FOTO MEDIANTE BYTES (Funciona en Web y Móvil)
   Future<void> _tomarFoto(bool esEvento, ImageSource origen) async {
     try {
       final XFile? foto = await _picker.pickImage(
         source: origen,
-        imageQuality: 15,
+        imageQuality: 20,
         maxWidth: 500,
         maxHeight: 500,
       );
 
       if (foto != null) {
-        File fotoComprimida = await _comprimirFoto(File(foto.path), maxKB: 30);
+        Uint8List rawBytes = await foto.readAsBytes();
+        Uint8List fotoComprimida = await _comprimirFoto(rawBytes, maxKB: 30);
 
         setState(() {
           if (esEvento) {
@@ -435,21 +435,8 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
                       ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
                       Uint8List pngBytes = byteData!.buffer.asUint8List();
 
-                      while (pngBytes.lengthInBytes > 10 * 1024 && pixelRatio > 0.2) {
-                        pixelRatio -= 0.15;
-                        image = await boundary.toImage(pixelRatio: pixelRatio);
-                        byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-                        if (byteData != null) {
-                          pngBytes = byteData.buffer.asUint8List();
-                        }
-                      }
-
-                      final tempDir = Directory.systemTemp;
-                      final file = File('${tempDir.path}/firma_${DateTime.now().millisecondsSinceEpoch}.png');
-                      await file.writeAsBytes(pngBytes, flush: true);
-
                       setState(() {
-                        _archivoFirmaProcesado = file;
+                        _archivoFirmaProcesado = pngBytes;
                       });
                     } catch (e) {
                       debugPrint("Error al procesar firma: $e");
@@ -468,15 +455,15 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
     );
   }
 
-  Future<String> _generarPdfBase64EnMemoria(File archivoFirma) async {
+  Future<String> _generarPdfBase64EnMemoria(Uint8List archivoFirmaBytes) async {
     final pdf = pw.Document();
 
-    final imgFirma = pw.MemoryImage(archivoFirma.readAsBytesSync());
+    final imgFirma = pw.MemoryImage(archivoFirmaBytes);
     pw.MemoryImage? imgEvento;
     pw.MemoryImage? imgCausante;
 
-    if (_evidenciaEvento != null) imgEvento = pw.MemoryImage(_evidenciaEvento!.readAsBytesSync());
-    if (_evidenciaCausante != null) imgCausante = pw.MemoryImage(_evidenciaCausante!.readAsBytesSync());
+    if (_evidenciaEvento != null) imgEvento = pw.MemoryImage(_evidenciaEvento!);
+    if (_evidenciaCausante != null) imgCausante = pw.MemoryImage(_evidenciaCausante!);
 
     final String placaPdf = _mostrarDatosVehiculo && _placaVehiculoCtrl.text.trim().isNotEmpty
         ? _placaVehiculoCtrl.text.trim()
@@ -672,10 +659,15 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
       String? urlFotoFirma;
       String? pdfBase64;
 
-      if (_evidenciaEvento != null) urlFotoEvento = await ApiService.subirFoto('evidencia_evento', _evidenciaEvento!);
-      if (_evidenciaCausante != null) urlFotoCausante = await ApiService.subirFoto('evidencia_causante', _evidenciaCausante!);
+      // SUBIDA COMPATIBLE CON BYTES (Servidor/Web)
+      if (_evidenciaEvento != null) {
+        urlFotoEvento = await ApiService.subirFotoBytes('evidencia_evento', _evidenciaEvento!);
+      }
+      if (_evidenciaCausante != null) {
+        urlFotoCausante = await ApiService.subirFotoBytes('evidencia_causante', _evidenciaCausante!);
+      }
 
-      urlFotoFirma = await ApiService.subirFoto('firma_conciliador', _archivoFirmaProcesado!);
+      urlFotoFirma = await ApiService.subirFotoBytes('firma_conciliador', _archivoFirmaProcesado!);
 
       final String valorFirmaBD = (urlFotoFirma != null && urlFotoFirma.startsWith('http'))
           ? urlFotoFirma
@@ -1326,7 +1318,7 @@ $listaProdTxt
                         children: [
                           const Text('FIRMA REGISTRADA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
                           const SizedBox(height: 8),
-                          Image.file(_archivoFirmaProcesado!, height: 90, fit: BoxFit.contain),
+                          Image.memory(_archivoFirmaProcesado!, height: 90, fit: BoxFit.contain),
                           const SizedBox(height: 8),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -1483,7 +1475,8 @@ $listaProdTxt
     );
   }
 
-  Widget _buildFotoCaja(String titulo, File? archivoFoto, VoidCallback onTap) {
+  // 🖼️ CONTENEDOR VISUAL CON COMPATIBILIDAD DE MEMORIA
+  Widget _buildFotoCaja(String titulo, Uint8List? bytesFoto, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
@@ -1494,12 +1487,12 @@ $listaProdTxt
           border: Border.all(color: Colors.grey.shade300, style: BorderStyle.solid, width: 1.5),
           borderRadius: BorderRadius.circular(12),
         ),
-        child: archivoFoto != null
+        child: bytesFoto != null
             ? Stack(
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(10),
-              child: Image.file(archivoFoto, fit: BoxFit.cover, width: double.infinity, height: double.infinity),
+              child: Image.memory(bytesFoto, fit: BoxFit.cover, width: double.infinity, height: double.infinity),
             ),
             Positioned(
               right: 6,

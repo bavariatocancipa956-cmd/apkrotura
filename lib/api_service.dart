@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data'; // 👈 Necesario para Uint8List
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
@@ -35,7 +36,7 @@ class ApiService {
     }
   }
 
-  // 🟡 ACTUALIZAR (MÉTODO AGREGADO)
+  // 🟡 ACTUALIZAR
   static Future<Map<String, dynamic>> actualizar(
       String esquema,
       String tabla,
@@ -76,7 +77,7 @@ class ApiService {
     }
   }
 
-  // 📸 SUBIR FOTO
+  // 📸 SUBIR FOTO DESDE ARCHIVO (File)
   static Future<String?> subirFoto(String nombreCampo, File archivo) async {
     final url = Uri.parse('$baseUrl/archivos/subir');
     var request = http.MultipartRequest('POST', url);
@@ -90,6 +91,34 @@ class ApiService {
     }
 
     final bytes = await archivo.readAsBytes();
+
+    request.files.add(http.MultipartFile.fromBytes(
+      nombreCampo,
+      bytes,
+      filename: '${nombreCampo}_${DateTime.now().millisecondsSinceEpoch}$ext',
+      contentType: MediaType('image', tipoMime),
+    ));
+
+    final response = await request.send();
+    final responseData = await response.stream.bytesToString();
+    final json = jsonDecode(responseData);
+
+    if (response.statusCode == 200 && json['exito'] == true) {
+      return json['urls'][nombreCampo];
+    } else {
+      final mensajeError = json['error'] ?? responseData;
+      throw Exception(mensajeError.toString().trim());
+    }
+  }
+
+  // 📸 SUBIR FOTO DESDE BYTES (Uint8List) 👈 MÉTODO AGREGADO
+  static Future<String?> subirFotoBytes(String nombreCampo, Uint8List bytes, {String ext = '.png'}) async {
+    final url = Uri.parse('$baseUrl/archivos/subir');
+    var request = http.MultipartRequest('POST', url);
+    request.headers.addAll({'x-api-key': apiKey});
+
+    String tipoMime = (ext.contains('jpg') || ext.contains('jpeg')) ? 'jpeg' : 'png';
+    if (!ext.startsWith('.')) ext = '.$ext';
 
     request.files.add(http.MultipartFile.fromBytes(
       nombreCampo,
