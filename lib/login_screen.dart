@@ -65,14 +65,25 @@ class _LoginScreenState extends State<LoginScreen> {
           'usuario': usuario,
           'contrasena': contrasena,
         }),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final decoded = jsonDecode(response.body);
+        Map<String, dynamic>? usuarioExtraido;
 
-        if (data['exito'] == true && data['usuario'] != null) {
-          final Map<String, dynamic> usuarioMap = Map<String, dynamic>.from(data['usuario']);
+        // 🛡️ REGLA INTELIGENTE DE LECTURA PARA LOGIN
+        if (decoded is List && decoded.isNotEmpty) {
+          usuarioExtraido = decoded.first as Map<String, dynamic>?;
+        } else if (decoded is Map<String, dynamic>) {
+          var target = decoded['usuario'] ?? decoded['data'] ?? decoded;
+          if (target is List && target.isNotEmpty) {
+            usuarioExtraido = target.first as Map<String, dynamic>?;
+          } else if (target is Map<String, dynamic>) {
+            usuarioExtraido = target;
+          }
+        }
 
+        if (usuarioExtraido != null && usuarioExtraido.isNotEmpty) {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('ultimo_usuario', usuario);
           await prefs.setString('ultimo_pass', contrasena);
@@ -82,19 +93,31 @@ class _LoginScreenState extends State<LoginScreen> {
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
-              builder: (context) => PantallaMenu(usuario: usuarioMap),
+              builder: (context) => PantallaMenu(usuario: usuarioExtraido!),
             ),
           );
           return;
+        } else {
+          _mostrarErrorDialog('Respuesta del servidor no válida. No se encontró el usuario.');
+          return;
         }
-      } else if (response.statusCode == 401) {
+      } else if (response.statusCode == 401 || response.statusCode == 404) {
         _mostrarErrorDialog('Usuario o contraseña incorrectos.');
         return;
-      }
+      } else {
+        // 🛡️ LECTURA INTELIGENTE DE ERRORES (Extrae el motivo real del Error 500)
+        String detalleError = 'Error de comunicación con el servidor (${response.statusCode}).';
+        try {
+          final errorJson = jsonDecode(response.body);
+          if (errorJson['mensaje'] != null) detalleError = errorJson['mensaje'].toString();
+          else if (errorJson['error'] != null) detalleError = errorJson['error'].toString();
+          else if (errorJson['details'] != null) detalleError = errorJson['details'].toString();
+        } catch (_) {}
 
-      _mostrarErrorDialog('Error de comunicación con el servidor (${response.statusCode}).');
+        _mostrarErrorDialog(detalleError);
+      }
     } catch (e) {
-      _mostrarErrorDialog('No se pudo conectar con el servidor. Verifica tu conexión.');
+      _mostrarErrorDialog('No se pudo conectar con el servidor. Verifica tu conexión a internet.');
     } finally {
       if (mounted) setState(() => _cargando = false);
     }

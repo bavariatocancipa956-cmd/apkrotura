@@ -19,7 +19,16 @@ class ApiService {
     final url = Uri.parse('$baseUrl/$database/consultar/$esquema/$tabla');
     final response = await http.get(url, headers: _headers);
     if (response.statusCode == 200) {
-      return jsonDecode(response.body)['data'];
+      final decoded = jsonDecode(response.body);
+
+      // 🛡️ REGLA INTELIGENTE DE LECTURA
+      if (decoded is List) {
+        return decoded;
+      } else if (decoded is Map<String, dynamic> && decoded['data'] != null) {
+        return decoded['data'] is List ? decoded['data'] : [decoded['data']];
+      } else {
+        return []; // Retorna lista vacía si no encuentra un formato reconocible
+      }
     } else {
       throw Exception('Error de API: ${response.body}');
     }
@@ -29,8 +38,17 @@ class ApiService {
   static Future<Map<String, dynamic>> insertar(String esquema, String tabla, Map<String, dynamic> datos) async {
     final url = Uri.parse('$baseUrl/$database/insertar/$esquema/$tabla');
     final response = await http.post(url, headers: _headers, body: jsonEncode(datos));
-    if (response.statusCode == 201) {
-      return jsonDecode(response.body)['data'];
+    if (response.statusCode == 201 || response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+
+      // 🛡️ REGLA INTELIGENTE PARA INSERTAR
+      if (decoded is Map<String, dynamic>) {
+        return decoded['data'] ?? decoded; // Devuelve 'data' si existe, si no, todo el objeto
+      } else if (decoded is List && decoded.isNotEmpty) {
+        return decoded.first; // Si la respuesta es una lista, devuelve el primer elemento (el registro insertado)
+      } else {
+        return {}; // Retorno por defecto si la respuesta es extraña
+      }
     } else {
       throw Exception('Error guardando datos: ${response.body}');
     }
@@ -54,7 +72,15 @@ class ApiService {
 
     if (response.statusCode == 200 || response.statusCode == 201) {
       final body = jsonDecode(response.body);
-      return body['data'] ?? body;
+
+      // 🛡️ REGLA INTELIGENTE PARA ACTUALIZAR
+      if (body is Map<String, dynamic>) {
+        return body['data'] ?? body;
+      } else if (body is List && body.isNotEmpty) {
+        return body.first;
+      } else {
+        return {};
+      }
     } else {
       throw Exception('Error al actualizar datos: ${response.body}');
     }

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show kIsWeb; // 👈 NUEVO: Importación para detectar si es Web
 import 'package:image_picker/image_picker.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -39,8 +40,10 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
     return 'OPERADOR';
   }
 
-  // 🇨🇴 FECHA DE REGISTRO EN HORA COLOMBIA (UTC-5)
+  // 🇨🇴 FECHA Y HORA COLOMBIA (UTC-5)
+  DateTime get _horaColombiaActual => DateTime.now().toUtc().subtract(const Duration(hours: 5));
   late DateTime _fechaEvento;
+
   String? _turno;
   final String _area = 'LOGISTICA';
 
@@ -70,7 +73,6 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
 
   final List<ProductoAfectado> _productos = [ProductoAfectado()];
 
-  // 🌐 MANEJO DE IMÁGENES COMPATIBLE CON WEB (Uint8List en lugar de File)
   Uint8List? _evidenciaEvento;
   Uint8List? _evidenciaCausante;
   Uint8List? _archivoFirmaProcesado;
@@ -82,7 +84,6 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
         causalLimpia == 'vehiculo t2 condiciones no optimas';
   }
 
-  // 🧹 LIMPIEZA VISUAL DE CÉDULAS / GUIONES
   String _limpiarTextoPersona(String? texto) {
     if (texto == null || texto.trim().isEmpty) return '';
     return texto
@@ -94,8 +95,7 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
   @override
   void initState() {
     super.initState();
-    // 🇨🇴 Hora oficial de Colombia (UTC - 5 horas)
-    _fechaEvento = DateTime.now().toUtc().subtract(const Duration(hours: 5));
+    _fechaEvento = _horaColombiaActual;
     _cargarListasDesdeBD();
   }
 
@@ -231,7 +231,6 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
     }
   }
 
-  // 🗜️ COMPRESIÓN DE FOTO MEDIANTE BYTES (Compatibilidad total con Web)
   Future<Uint8List> _comprimirFoto(Uint8List bytesOriginales, {int maxKB = 30}) async {
     int maxBytes = maxKB * 1024;
     if (bytesOriginales.lengthInBytes <= maxBytes) {
@@ -260,8 +259,13 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
     return bytesOriginales;
   }
 
-  // 📸 SELECCIONAR ORIGEN DE LA FOTO (CÁMARA O GALERÍA)
+  // 👈 NUEVO: Lógica condicional para Web vs APK
   void _mostrarOpcionesOrigenImagen(bool esEvento) {
+    if (kIsWeb) {
+      _tomarFoto(esEvento, ImageSource.gallery);
+      return;
+    }
+
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -308,19 +312,26 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
     );
   }
 
-  // 📷 TOMAR/SELECCIONAR FOTO MEDIANTE BYTES (Funciona en Web y Móvil)
+  // 👈 NUEVO: Protección de compresión segura para navegadores web
   Future<void> _tomarFoto(bool esEvento, ImageSource origen) async {
     try {
       final XFile? foto = await _picker.pickImage(
         source: origen,
-        imageQuality: 20,
-        maxWidth: 500,
-        maxHeight: 500,
+        imageQuality: 30,
+        maxWidth: 800,
+        maxHeight: 800,
       );
 
       if (foto != null) {
         Uint8List rawBytes = await foto.readAsBytes();
-        Uint8List fotoComprimida = await _comprimirFoto(rawBytes, maxKB: 30);
+
+        Uint8List fotoComprimida;
+        try {
+          fotoComprimida = await _comprimirFoto(rawBytes, maxKB: 40);
+        } catch (e) {
+          debugPrint("Omitiendo compresión manual en Web: $e");
+          fotoComprimida = rawBytes;
+        }
 
         setState(() {
           if (esEvento) {
@@ -659,7 +670,6 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
       String? urlFotoFirma;
       String? pdfBase64;
 
-      // SUBIDA COMPATIBLE CON BYTES (Servidor/Web)
       if (_evidenciaEvento != null) {
         urlFotoEvento = await ApiService.subirFotoBytes('evidencia_evento', _evidenciaEvento!);
       }
@@ -675,8 +685,15 @@ class _RegistroRoturaScreenState extends State<RegistroRoturaScreen> {
 
       pdfBase64 = await _generarPdfBase64EnMemoria(_archivoFirmaProcesado!);
 
+      // 🇨🇴 CÁLCULO DEL TIMESTAMP EXACTO EN HORA COLOMBIA (YYYY-MM-DD HH:MM:SS)
+      final DateTime ahoraCol = _horaColombiaActual;
+      final String timestampColombia =
+          "${ahoraCol.year}-${ahoraCol.month.toString().padLeft(2, '0')}-${ahoraCol.day.toString().padLeft(2, '0')} "
+          "${ahoraCol.hour.toString().padLeft(2, '0')}:${ahoraCol.minute.toString().padLeft(2, '0')}:${ahoraCol.second.toString().padLeft(2, '0')}";
+
       for (var producto in _productos) {
         Map<String, dynamic> datosDeRotura = {
+          'timestamp_registro': timestampColombia, // 👈 ENVIADO EXPLÍCITAMENTE A POSTGRESQL
           'fecha_evento': _fechaEvento.toIso8601String().split('T')[0],
           'turno': _turno,
           'area': _area,
@@ -1038,14 +1055,21 @@ $listaProdTxt
                   children: [
                     const CircleAvatar(radius: 25, backgroundColor: Color(0xFFE3F2FD), child: Icon(Icons.person, color: Color(0xFF0D47A1), size: 30)),
                     const SizedBox(width: 15),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('OPERADOR REPORTANTE', style: TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-                        const SizedBox(height: 3),
-                        Text(_nombreReportante, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Color(0xFF0D47A1))),
-                      ],
-                    )
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('OPERADOR REPORTANTE', style: TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                          const SizedBox(height: 3),
+                          Text(
+                            _nombreReportante,
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Color(0xFF0D47A1)),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -1475,7 +1499,6 @@ $listaProdTxt
     );
   }
 
-  // 🖼️ CONTENEDOR VISUAL CON COMPATIBILIDAD DE MEMORIA
   Widget _buildFotoCaja(String titulo, Uint8List? bytesFoto, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
